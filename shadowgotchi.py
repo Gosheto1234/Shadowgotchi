@@ -30,11 +30,12 @@ os.makedirs(CRACKED_DIR, exist_ok=True)
 
 # ASCII faces
 def face_lines(state):
-    return {
-        'neutral': ["  -   -  ", " ( o   o )", "   \___/  "],
-        'happy':   ["  ^   ^  ", " ( o ^ o )", "   \___/  "],
-        'sad':     ["  -   -  ", " ( o . o )", "   \___/  "]
-    }.get(state, ["  -   -  ", " ( o   o )", "   \___/  "])
+    faces = {
+        'neutral': [r'  -   -  ', r' ( o   o )', r'   \___/  '],
+        'happy':   [r'  ^   ^  ', r' ( o ^ o )', r'   \___/  '],
+        'sad':     [r'  -   -  ', r' ( o . o )', r'   \___/  ']
+    }
+    return faces.get(state, faces['neutral'])
 
 # Scan for BSSIDs using iw
 def scan_networks(interface):
@@ -43,14 +44,13 @@ def scan_networks(interface):
             ['iw', 'dev', interface, 'scan'], capture_output=True, text=True, check=True
         )
         output = proc.stdout
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         return []
 
     bssids = []
     for line in output.splitlines():
         line = line.strip()
         if line.startswith('BSS '):
-            # line: BSS aa:bb:cc:dd:ee:ff(freq...)
             parts = line.split()
             if len(parts) >= 2:
                 bssid = parts[1]
